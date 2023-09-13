@@ -3,15 +3,10 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.animation import FuncAnimation
 import serial
-from Reader import ReadLine
-from input import Form
+
 import customtkinter
 
-def evaluate(data: int) -> np.ndarray:
-    """Evaluate and process data."""
-    return np.array([int((time.time() - str_time) * 1e6), data])
 
 class App(customtkinter.CTk):
     def __init__(self):
@@ -20,22 +15,31 @@ class App(customtkinter.CTk):
 
     def create_widgets(self):
         """Create widgets for the application."""
-        Form(master=self, questions=["Port?", "Baud?", "test3"])
+        Form(master=self, questions=["Port?", "Baud?", "test3"])  # add questions here
 
+    def stop_serial(self):
+        """Stop serial communication and close the serial port."""
+        if self.comm.is_open:
+            self.comm.close()
+            self.serial_open = False
+            print("Serial communication stopped")
     def connect(self):
         """Establish a serial connection."""
         port = self.data.get("Port?")
         if port:
             baud = self.data.get("Baud?", 9600)
             try:
+                # runs when serial port is ready to read (when the actual code starts)
                 self.comm = serial.Serial(port=port, baudrate=baud)
-                self.Reader = ReadLine(self.comm)
+                self.reader = ReadLine(self.comm)
                 print("Successful serial connection")
                 self.np_data = np.array([0, 0], int)
                 self.grapher = ContinuousGraphApp(self)
                 self.display = customtkinter.CTkLabel(self)
+                self.stop = customtkinter.CTkButton(self,command=self.stop_serial)
+                self.stop.pack()
                 self.display.pack()
-                # self.grapher.after(10, update())
+                self.start_data_reading_thread()
             except serial.SerialException:
                 print("Failed to establish a serial connection")
                 exit()
@@ -43,28 +47,31 @@ class App(customtkinter.CTk):
             print("No port specified")
             exit()
 
-    def readserial(self):
+    def start_data_reading_thread(self):
+        """Start a thread to read data from the serial port and update the graph."""
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self.read_serial)
+        self.thread.start()
+
+    def read_serial(self):
         """Read data from the serial port and update the graph."""
         i = 0
         while True:
             try:
-                raw_data = int(self.comm.readline().decode('utf-8').strip("\r\n"))
-                data = evaluate(raw_data)
+                raw_data = int(self.reader.readline().decode('utf-8').strip("\r\n"))
+                data = self.evaluate(raw_data)
                 with self.lock:
                     self.np_data = np.vstack((self.np_data, data))
-                    # print(self.np_data)
                 self.grapher.update_data(data)
-
                 self.display.configure(text=f"Data: {raw_data}")
             except ValueError:
-                print("errorerd")
+                print("Error reading data")
                 pass
 
-    def mainApp(self):
-        """Start the main application and read data in a separate thread."""
-        self.lock = threading.Lock()
-        self.thread = threading.Thread(target=self.readserial)
-        self.thread.start()
+    def evaluate(data: int) -> np.ndarray:
+        """Evaluate and process data."""
+        return np.array([int((time.time() - str_time) * 1e6), data])
+
 
 class ContinuousGraphApp:
     def __init__(self, root):
@@ -76,10 +83,7 @@ class ContinuousGraphApp:
 
         self.fig, self.ax = plt.subplots()
         self.fig.tight_layout()
-        # self.ax.set_xlim(0, 200000000)
-        # self.ax.set_ylim(0, 100)
         self.line, = self.ax.plot([], [], lw=2)
-
 
         self.x_data = []
         self.y_data = []
@@ -88,70 +92,72 @@ class ContinuousGraphApp:
         self.canvas.get_tk_widget().pack(fill=customtkinter.BOTH, expand=True)
 
     def update_data(self, data):
-        # print("update")
-        """Update the graph with new data."""
-        global i
-        i += 1
         self.x_data.append(data[0])
         self.y_data.append(data[1])
-        # print(self.x_data)
-        if i > 100:
-            self.x_data =
+        if len(self.x_data) > 100:
+            self.x_data.pop(0)
+            self.y_data.pop(0)
         self.line.set_data(self.x_data, self.y_data)
         self.ax.relim()
         self.ax.autoscale_view(True, True, True)
         self.canvas.draw()
-        return
-
 
 
 class question(customtkinter.CTkFrame):
-    entries = []
     def __init__(self, master, question_messages):
         self.msgs = question_messages
         super().__init__(master, fg_color="#217a61")
         self.create_widgets(question_messages)
 
     def create_widgets(self, quest_msgs):
+        self.entries = []
         for index, msg in enumerate(quest_msgs):
-            msg = customtkinter.CTkLabel(self,text=msg)
+            msg = customtkinter.CTkLabel(self, text=msg)
             input = customtkinter.CTkEntry(self)
             self.entries.append(input)
-            msg.grid(row=index, column=0, padx= 10, pady =10)
-            input.grid(row=index, column=1, pady =10, padx =10)
-        return
+            msg.grid(row=index, column=0, padx=10, pady=10)
+            input.grid(row=index, column=1, pady=10, padx=10)
+
     def done(self):
         data = [entry.get() for entry in self.entries]
         self.destroy()
         self.data = dict(zip(self.msgs, data))
-        return dict(zip(self.msgs, data))
-class Form():
-    def __init__(self,master,questions):
+        return self.data
+
+
+class Form:
+    def __init__(self, master, questions):
         self.questions = questions
         self.master = master
         self.create_widgets()
-        #rest of code
-        # self.mainloop()
 
-    def _getresponse(self, outside, button):
+    def _get_response(self, outside, button):
         self.response_data = outside.done()
-        # print(self.response_data)
         button.destroy()
         self.master.data = self.response_data
         self.master.connect()
-        self.master.mainApp()
+
     def create_widgets(self):
         outside = question(self.master, self.questions)
-        enter = customtkinter.CTkButton(self.master, text="submit", command=lambda: self._getresponse(outside, enter))
+        enter = customtkinter.CTkButton(self.master, text="Submit", command=lambda: self._get_response(outside, enter))
         outside.pack(padx=10, pady=10)
         enter.pack(padx=10, pady=10)
-        return
 
 
+class ReadLine:
+    LINE_BREAK = b'\r\n'
 
-global str_time
-str_time = time.time()
-i=0
+    def __init__(self, s):
+        self.buf = bytearray()
+        self.s = s
+
+    def readline(self):
+        r = self.s.readline().strip(self.LINE_BREAK)
+        print(r)
+        return r
+
+
 if __name__ == "__main__":
+    str_time = time.time()
     tk = App()
     tk.mainloop()
