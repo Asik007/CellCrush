@@ -36,7 +36,7 @@ class App(customtkinter.CTk):
                 self.np_data = np.array([0, 0], int)
                 self.grapher = ContinuousGraphApp(self)
                 self.display = customtkinter.CTkLabel(self)
-                self.stop = customtkinter.CTkButton(self,command=self.stop_serial)
+                self.stop = customtkinter.CTkButton(self,command=self.stop_serial, text="Quit (coming soon)")
                 self.stop.pack()
                 self.display.pack()
                 self.start_data_reading_thread()
@@ -59,6 +59,7 @@ class App(customtkinter.CTk):
         while True:
             try:
                 raw_data = int(self.reader.readline().decode('utf-8').strip("\r\n"))
+                print(raw_data)
                 data = self.evaluate(raw_data)
                 with self.lock:
                     self.np_data = np.vstack((self.np_data, data))
@@ -68,7 +69,7 @@ class App(customtkinter.CTk):
                 print("Error reading data")
                 pass
 
-    def evaluate(data: int) -> np.ndarray:
+    def evaluate(self, data: int) -> np.ndarray:
         """Evaluate and process data."""
         return np.array([int((time.time() - str_time) * 1e6), data])
 
@@ -82,6 +83,9 @@ class ContinuousGraphApp:
         self.frame.pack(padx=10, pady=10, fill=customtkinter.BOTH, expand=True)
 
         self.fig, self.ax = plt.subplots()
+        self.ax.set_xlabel('Time (Epoch)')
+        self.ax.set_ylabel('Data')
+
         self.fig.tight_layout()
         self.line, = self.ax.plot([], [], lw=2)
 
@@ -140,6 +144,7 @@ class Form:
     def create_widgets(self):
         outside = question(self.master, self.questions)
         enter = customtkinter.CTkButton(self.master, text="Submit", command=lambda: self._get_response(outside, enter))
+        self.master.bind('<Return>', lambda event=None: self._get_response(outside, enter))
         outside.pack(padx=10, pady=10)
         enter.pack(padx=10, pady=10)
 
