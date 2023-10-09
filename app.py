@@ -11,18 +11,43 @@ import customtkinter
 class App(customtkinter.CTk):
     def __init__(self):
         super().__init__()
-        self.create_widgets()
+        self.stop_flag = None
+        self.initial_widgets()
 
-    def create_widgets(self):
+    def initial_widgets(self):
         """Create widgets for the application."""
         Form(master=self, questions=["Port?", "Baud?", "test3"])  # add questions here
 
     def stop_serial(self):
         """Stop serial communication and close the serial port."""
-        if self.comm.is_open:
-            self.comm.close()
-            self.serial_open = False
-            print("Serial communication stopped")
+        try:
+            if self.comm.is_open:
+                print("close thread")
+                self.stop_flag = True
+                self.thread.join()
+                print("closed")
+                self.comm.flushInput()
+                self.comm.flushOutput()
+                self.comm.close()
+                print("Serial port closed successfully.")
+            else:
+                print("Serial port is already closed.")
+        except Exception as e:
+            print(f"Error while closing serial port: {str(e)}")
+
+    def start_serial(self):
+        """Stop serial communication and close the serial port."""
+        try:
+            if not self.comm.is_open:
+                self.comm.open()
+                self.stop_flag = False
+                self.thread.start()
+                print("Serial port opened successfully.")
+            else:
+                print("Serial port is already open.")
+        except Exception as e:
+            print(f"Error while opening serial port: {str(e)}")
+
     def connect(self):
         """Establish a serial connection."""
         port = self.data.get("Port?")
@@ -33,13 +58,7 @@ class App(customtkinter.CTk):
                 self.comm = serial.Serial(port=port, baudrate=baud)
                 self.reader = ReadLine(self.comm)
                 print("Successful serial connection")
-                self.np_data = np.array([0, 0], int)
-                self.grapher = ContinuousGraphApp(self)
-                self.display = customtkinter.CTkLabel(self)
-                self.stop = customtkinter.CTkButton(self,command=self.stop_serial, text="Quit (coming soon)")
-                self.stop.pack()
-                self.display.pack()
-                self.start_data_reading_thread()
+                self.init_app()
             except serial.SerialException:
                 print("Failed to establish a serial connection")
                 exit()
@@ -52,26 +71,50 @@ class App(customtkinter.CTk):
         self.lock = threading.Lock()
         self.thread = threading.Thread(target=self.read_serial)
         self.thread.start()
+        self.stop_flag = False
+
+    def init_app(self):
+        self.np_data = np.array([0, 0], int)
+        self.grapher = ContinuousGraphApp(self)
+        self.display = customtkinter.CTkLabel(self)
+        self.stop = customtkinter.CTkButton(self, command=self.stop_serial, text="Stop")
+        self.start = customtkinter.CTkButton(self, command=self.start_serial, text="Start")
+        self.stop.pack()
+        self.start.pack()
+        self.display.pack()
+        self.start_data_reading_thread()
+        # self.bind("WM_DELETE_WINDOW", self.stop_serial)
+        # self.bind("WM_DELETE_WINDOW", self.destroy)
+
 
     def read_serial(self):
         """Read data from the serial port and update the graph."""
         i = 0
+        j = 0
         while True:
-            try:
-                raw_data = int(self.reader.readline().decode('utf-8').strip("\r\n"))
-                print(raw_data)
-                data = self.evaluate(raw_data)
-                with self.lock:
-                    self.np_data = np.vstack((self.np_data, data))
-                self.grapher.update_data(data)
-                self.display.configure(text=f"Data: {raw_data}")
-            except ValueError:
-                print("Error reading data")
-                pass
+            if not self.stop_flag:
+                try:
+                    raw_data = int(self.reader.readline().decode('utf-8').strip("\r\n"))
+                    print(raw_data)
+                    j += 1
+                    data = self.evaluate(raw_data)
+                    with self.lock:
+                        self.np_data = np.vstack((self.np_data, data))
+                    if j >= 100:
+                        self.df = pd.df
+                    self.grapher.update_data(data)
+                    self.display.configure(text=f"Data: {raw_data}")
+                    print(time.thread_time())
+                except ValueError:
+                    print("Error reading data")
+                    pass
 
     def evaluate(self, data: int) -> np.ndarray:
         """Evaluate and process data."""
-        return np.array([int((time.time() - str_time) * 1e6), data])
+        global i
+        i += 1
+        # return np.array([(time.thread_time()*1e4), data])
+        return np.array([i, data])
 
 
 class ContinuousGraphApp:
@@ -161,8 +204,9 @@ class ReadLine:
         print(r)
         return r
 
-
 if __name__ == "__main__":
+    global i
+    i = 0
     str_time = time.time()
     tk = App()
     tk.mainloop()
